@@ -1,6 +1,6 @@
 " Description: Omni completion script for cpp files
 " Maintainer:  Vissale NEANG
-" Last Change: 26 sept. 2007
+" Last Change: 19 Jul. 2012
 
 let g:omni#cpp#namespaces#CacheResolve = {}
 let g:omni#cpp#namespaces#CacheUsing = {}
@@ -92,6 +92,7 @@ function! s:GetNamespaceListFromLine(szLine)
     for token in tokens
         if state==0
             let szNamespace = ''
+            let szLastName = ''
             if token.value == '/*'
                 let state = 1
             elseif token.value == '//'
@@ -108,6 +109,12 @@ function! s:GetNamespaceListFromLine(szLine)
         elseif state==2
             if token.value == 'namespace'
                 let state = 3
+            elseif token.value == '::'
+                let szLastName .= token.value
+                let state = 6
+            elseif token.kind == 'cppWord'
+                let szLastName .= token.value
+                let state = 7
             else
                 " Error, 'using' must be followed by 'namespace'
                 let state = -1
@@ -140,10 +147,31 @@ function! s:GetNamespaceListFromLine(szLine)
                 call extend(result, [szNamespace])
                 let state = 0
             endif
+        elseif state==6
+            if token.kind == 'cppWord'
+                let szLastName .= token.value
+                let state = 7
+                " Maybe end of tokens
+            else
+                " Error, we can't have 'using Something::'
+                let state = -1
+                break
+            endif
+        elseif state==7
+            if token.value == '::'
+                let szNamespace .= szLastName
+                let szLastName = token.value
+                let state = 6
+            else
+                call extend(result, [szNamespace])
+                let state = 0
+            endif
         endif
     endfor
 
     if state == 5
+        call extend(result, [szNamespace])
+    elseif state == 7 && szNamespace != ''
         call extend(result, [szNamespace])
     endif
 
@@ -264,7 +292,8 @@ function! omni#cpp#namespaces#GetMapFromCurrentBuffer()
     call setpos('.', [0, 1, 1, 0])
     let curPos = [1,1]
     while curPos != [0,0]
-        let curPos = searchpos('\C^using\s\+namespace', 'W')
+        "let curPos = searchpos('\C^using\s\+namespace', 'W')
+        let curPos = searchpos('\C^\s*using\s', 'W')
         if curPos != [0,0]
             let szLine = getline('.')
             let startPos = curPos[1]
@@ -297,7 +326,8 @@ function! omni#cpp#namespaces#GetMapFromBuffer(szFilePath, ...)
     let namespaceMap = {}
     " The file exists, we get the global namespaces in this file
     let szFixedPath = escape(szFilePath, g:omni#cpp#utils#szEscapedCharacters)
-    execute 'silent! lvimgrep /\C^using\s\+namespace/gj '.szFixedPath
+    "execute 'silent! lvimgrep /\C^using\s\+namespace/gj '.szFixedPath
+    execute 'silent! lvimgrep /\C^\s*using\s/gj '.szFixedPath
 
     " key = line number
     " value = list of namespaces
@@ -348,7 +378,7 @@ function! s:GetNamespaceAliasMap()
     let stopPos = s:GetStopPositionForLocalSearch()
     let stopLine = stopPos[0]
     let curPos = origPos
-    let lastLine = 0 
+    let lastLine = 0
     let nextStopLine = origPos[0]
     let szReAlias = '\Cnamespace\s\+\w\+\s\+='
     while curPos !=[0,0]
@@ -469,7 +499,7 @@ function! omni#cpp#namespaces#GetUsingNamespaces()
 
     let stopLine = stopPos[0]
     let curPos = origPos
-    let lastLine = 0 
+    let lastLine = 0
     let nextStopLine = origPos[0]
     while curPos !=[0,0]
         let curPos = searchpos('\C}\|\(using\s\+namespace\)', 'bW',stopLine)
@@ -483,7 +513,8 @@ function! omni#cpp#namespaces#GetUsingNamespaces()
             endif
 
             let szLine = omni#cpp#utils#GetCodeFromLine(szLine)
-            if match(szLine, '\Cusing\s\+namespace')<0
+            "if match(szLine, '\Cusing\s\+namespace')<0
+            if match(szLine, '\C\s*using\s')<0
                 " We found a '}'
                 let curPos = searchpairpos('{', '', '}', 'bW', g:omni#cpp#utils#expIgnoreComments)
             else
@@ -529,14 +560,14 @@ endfunc
 function! s:ResolveNamespace(namespace, mapCurrentContexts)
     let result = {'kind':0, 'value': ''}
 
-    " If the namespace is already resolved we add it in the list of 
+    " If the namespace is already resolved we add it in the list of
     " current contexts
     if match(a:namespace, '^::')>=0
         let result.kind = 1
         let result.value = a:namespace
         return result
     elseif match(a:namespace, '\w\+::\w\+')>=0
-        let mapCurrentContextsTmp = copy(a:mapCurrentContexts) 
+        let mapCurrentContextsTmp = copy(a:mapCurrentContexts)
         let resolvedItem = {}
         for nsTmp in  split(a:namespace, '::')
             let resolvedItem = s:ResolveNamespace(nsTmp, mapCurrentContextsTmp)
@@ -767,7 +798,7 @@ function! s:GetClassScopeAtCursor()
                 endif
             endif
         endfor
-        
+
         if len(listTmp)
             if len(listClassScope)
                 let bResolved = 1
@@ -798,7 +829,7 @@ function! s:GetClassScopeAtCursor()
             let szClassScope .= join(listClassScope, '::')
         else
             let szClassScope = join(listClassScope, '::')
-            
+
             " The class scope is not resolved, we have to check using
             " namespace declarations and search the class scope in each
             " namespace
